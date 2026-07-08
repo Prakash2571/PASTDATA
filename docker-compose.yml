@@ -1,0 +1,44 @@
+# Self-contained NSE F&O stock-futures backfill.
+#
+#   docker compose build                 # build the backfill image
+#   docker compose up -d mongo           # start MongoDB (data persists in ./data/mongo)
+#   docker compose run --rm backfill     # run the 7-year backfill, then exit
+#   ./export_data.sh                     # dump everything to one portable archive
+#
+# MongoDB data lives on the host at ./data/mongo, so it survives container
+# restarts. To copy the dataset off the instance, use ./export_data.sh (creates
+# a single .archive.gz you can scp to your laptop and mongorestore locally).
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: fno-mongo
+    restart: unless-stopped
+    volumes:
+      - ./data/mongo:/data/db            # <-- DB files stored on the instance disk
+    # Uncomment to reach MongoDB from tools on the instance itself (localhost only):
+    # ports:
+    #   - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1})"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  backfill:
+    build: .
+    image: fno-backfill:latest
+    container_name: fno-backfill
+    depends_on:
+      mongo:
+        condition: service_healthy       # wait until Mongo actually accepts connections
+    environment:
+      MONGODB_URI: "mongodb://mongo:27017"
+      MONGO_DB: "nse_fno"
+      MONGO_COLLECTION: "stock_futures"
+      MONGO_PROGRESS_COLLECTION: "ingest_progress"
+      YEARS_BACK: "7"
+      REQUEST_DELAY: "1.5"
+      INSTRUMENTS: "STOCK_FUT"
+    restart: "no"                         # one-shot job: run to completion, then stop

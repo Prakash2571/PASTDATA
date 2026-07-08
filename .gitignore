@@ -14,5 +14,9 @@ data/
 *.csv
 *.zip
 
+# MongoDB data volume + exported dumps
+data/mongo/
+*.archive.gz
+
 # Logs
 *.log
