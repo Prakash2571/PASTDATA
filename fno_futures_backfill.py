@@ -145,12 +145,19 @@ class BhavcopyFetcher:
     # -- raw fetchers ------------------------------------------------------- #
 
     def _fetch_old_raw(self, dt: date) -> str | None:
-        """Old FUTSTK-style CSV text via jugaad-data. Returns None if not found."""
+        """Old FUTSTK-style CSV text via jugaad-data. Returns None if not found.
+
+        On NSE holidays the archive server responds 200 with an HTML page (not a
+        zip), which jugaad-data surfaces as a BadZipFile / "not a zip" error. We
+        treat that as "no file for this day" so holidays are skipped, not fatal.
+        """
         try:
             return self.archives.bhavcopy_fo_raw(dt)
+        except zipfile.BadZipFile:
+            return None
         except Exception as exc:  # jugaad raises on 404/other
             msg = str(exc).lower()
-            if "404" in msg or "not found" in msg:
+            if "404" in msg or "not found" in msg or "not a zip" in msg:
                 return None
             raise
 
@@ -161,10 +168,14 @@ class BhavcopyFetcher:
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
-        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-            name = zf.namelist()[0]
-            with zf.open(name) as fp:
-                return fp.read().decode("utf-8")
+        # Holidays / missing files can come back as a 200 non-zip page: treat as no data.
+        try:
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                name = zf.namelist()[0]
+                with zf.open(name) as fp:
+                    return fp.read().decode("utf-8")
+        except zipfile.BadZipFile:
+            return None
 
     # -- normalizers -------------------------------------------------------- #
 
@@ -399,7 +410,7 @@ def run(cfg: Config):
     log.info("Backfilling %s -> %s | instruments=%s | delay=%.1fs",
              cfg.start_date, cfg.end_date, cfg.instruments, cfg.request_delay)
 
-    total_days = total_rows = trading_days = skipped = 0
+    total_days = total_rows = trading_days = skipped = failed = 0
     for dt in daterange(cfg.start_date, cfg.end_date):
         # Skip weekends (NSE is closed Sat/Sun) without hitting the network.
         if dt.weekday() >= 5:
@@ -412,8 +423,13 @@ def run(cfg: Config):
         docs = fetcher.fetch_day(dt)
 
         if docs is None:
-            log.error("Stopping: unrecoverable error on %s. Re-run to resume.", dt)
-            break
+            # Genuine fetch failure after retries (e.g. network). Don't halt the
+            # whole backfill; skip this day (leaving it un-ingested so a later
+            # re-run retries it) and move on.
+            failed += 1
+            log.error("%s  fetch failed after retries; skipping (re-run will retry it)", dt)
+            time.sleep(cfg.request_delay)
+            continue
         if docs:
             trading_days += 1
             if store:
@@ -436,8 +452,11 @@ def run(cfg: Config):
         # Be polite: serial, one request at a time, spaced out.
         time.sleep(cfg.request_delay)
 
-    log.info("Done. processed_days=%d trading_days=%d rows=%d skipped(existing)=%d",
-             total_days, trading_days, total_rows, skipped)
+    log.info("Done. processed_days=%d trading_days=%d rows=%d skipped(existing)=%d failed=%d",
+             total_days, trading_days, total_rows, skipped, failed)
+    if failed:
+        log.warning("%d day(s) failed to fetch and were left un-ingested. "
+                    "Re-run to retry just those days.", failed)
     if store:
         store.close()
 
