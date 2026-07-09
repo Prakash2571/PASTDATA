@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 
-.PHONY: help setup build run attach logs monitor watch export stop down status purge
+.PHONY: help setup build run attach logs monitor watch export export-csv stop down status purge
 
 help:  ## Show available commands
 	@echo "NSE F&O stock-futures backfill — available commands:"
@@ -36,8 +36,11 @@ monitor:  ## One-time snapshot of ingest progress from MongoDB
 watch:  ## Live-refresh ingest progress every 30s
 	watch -n 30 'bash monitor.sh'
 
-export:  ## Dump the whole dataset to a portable .archive.gz
+export:  ## Dump the whole dataset to a portable .archive.gz (for mongorestore)
 	@./export_data.sh
+
+export-csv:  ## Export the dataset to a flat CSV (for Excel)
+	@./export_csv.sh
 
 stop:  ## Stop MongoDB (data on disk is kept)
 	docker compose stop
