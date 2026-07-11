@@ -38,7 +38,7 @@ services:
       MONGO_DB: "nse_fno"
       MONGO_COLLECTION: "stock_futures"
       MONGO_PROGRESS_COLLECTION: "ingest_progress"
-      YEARS_BACK: "7"
+      YEARS_BACK: "10"
       REQUEST_DELAY: "1.5"
       INSTRUMENTS: "STOCK_FUT"
     restart: "no"                         # one-shot job: run to completion, then stop
